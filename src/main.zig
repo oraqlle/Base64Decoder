@@ -132,37 +132,76 @@ const B64DecodeMap = [_]u6{
     0b000000, // DEL, 127
 };
 
-pub fn base64Decode(chars: []const u8) u24 {
-    const byte0: u24 = B64DecodeMap[chars[0]];
-    const byte1: u24 = B64DecodeMap[chars[1]];
-    const byte2: u24 = B64DecodeMap[chars[2]];
-    const byte3: u24 = B64DecodeMap[chars[3]];
+pub fn base64Decode(alloc: std.mem.Allocator, chars: []const u8) !std.ArrayList(u8) {
+    const hasPadding = chars.len > 0 and (chars.len % 4 != 0 or chars[chars.len - 1] == '=');
+    const numBytes = (((chars.len + 3) / 4) - @intFromBool(hasPadding)) * 4;
+    const outLen = (((numBytes / 4) * 3) + @intFromBool(hasPadding));
 
-    return byte0 << 18 | byte1 << 12 | byte2 << 6 | byte3;
+    var decodedStr = try std.ArrayList(u8).initCapacity(alloc, outLen);
+    decodedStr.expandToCapacity();
+
+    var byteIdx: u32 = 0;
+    var destIdx: u32 = 0;
+    while (byteIdx < numBytes and destIdx < outLen) : ({
+        byteIdx += 4;
+        destIdx += 3;
+    }) {
+        const byte0: u24 = B64DecodeMap[chars[byteIdx]];
+        const byte1: u24 = B64DecodeMap[chars[byteIdx + 1]];
+        const byte2: u24 = B64DecodeMap[chars[byteIdx + 2]];
+        const byte3: u24 = B64DecodeMap[chars[byteIdx + 3]];
+
+        const bin = byte0 << 18 | byte1 << 12 | byte2 << 6 | byte3;
+
+        decodedStr.items[destIdx] = @truncate(bin >> 16);
+        decodedStr.items[destIdx + 1] = @truncate(bin >> (8 & 0xFF));
+        decodedStr.items[destIdx + 2] = @truncate(bin & 0xFF);
+    }
+
+    if (hasPadding) {
+        const pad0: u24 = B64DecodeMap[chars[numBytes]];
+        const pad1: u24 = B64DecodeMap[chars[numBytes + 1]];
+
+        var bin: u24 = pad0 << 18 | pad1 << 12;
+
+        decodedStr.items[decodedStr.items.len - 2] = @truncate(bin >> 16);
+
+        if (chars.len > numBytes + 2 and chars[numBytes + 2] != '=') {
+            const pad2: u24 = B64DecodeMap[chars[numBytes + 2]];
+            bin |= pad2 << 6;
+            decodedStr.items[decodedStr.items.len - 1] = @truncate(bin >> 8 & 0xFF);
+        }
+    }
+
+    return decodedStr;
 }
 
 pub fn main() !void {
     const stdout = std.io.getStdOut().writer();
     const stderr = std.io.getStdErr().writer();
+
     const argv = std.os.argv;
+
+    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    defer {
+        const gpa_status = gpa.deinit();
+        if (gpa_status == .leak) std.testing.expect(false) catch @panic("Memory leak");
+    }
 
     if (argv.len != 2) {
         try stderr.print("Expected 2 arguments, found: {d}\n", .{argv.len});
+        std.process.exit(1);
     }
 
-    const inLen = std.mem.len(argv[1]);
+    const encodedData = std.mem.span(argv[1]);
 
-    if (inLen != 5) {
-        try stderr.print("Argument needs to be five characters long, was: {d}\n", .{inLen});
+    if (encodedData.len < -1) {
+        try stderr.print("Argument needs to be five characters long, was: {d}\n", .{encodedData.len});
+        std.process.exit(1);
     }
 
-    const decodedBin = base64Decode("KGl0J");
+    const decodedStr = try base64Decode(gpa.allocator(), encodedData);
+    defer decodedStr.deinit();
 
-    var str = [_]u8{0} ** 3;
-    str[0] = @truncate(decodedBin >> 16);
-    str[1] = @truncate(decodedBin >> (8 & 0xFF));
-    str[2] = @truncate(decodedBin & 0xFF);
-
-    try stdout.print("{s}\n", .{str});
-    // try stdout.print("{b}", .{decodedBin});
+    try stdout.print("{s}", .{decodedStr.items[0..]});
 }
