@@ -133,19 +133,16 @@ const B64DecodeMap = [_]u6{
 };
 
 pub fn base64Decode(alloc: std.mem.Allocator, chars: []const u8) !std.ArrayList(u8) {
-    const hasPadding = chars.len > 0 and (chars.len % 4 != 0 or chars[chars.len - 1] == '=');
-    const numBytes = (((chars.len + 3) / 4) - @intFromBool(hasPadding)) * 4;
-    const outLen = (((numBytes / 4) * 3) + @intFromBool(hasPadding));
+    const hasPadding = chars.len % 4 != 0 or chars[chars.len - 1] == '=';
+    const morePadding = hasPadding and ((chars.len % 4 > 2) or (chars[chars.len - 2] != '='));
 
-    var decodedStr = try std.ArrayList(u8).initCapacity(alloc, outLen);
-    decodedStr.expandToCapacity();
+    const numBytes = ((chars.len - @intFromBool(hasPadding)) / 4) << 2;
+    const numOutChars = ((numBytes / 4) * 3) + @intFromBool(hasPadding) + @intFromBool(morePadding);
+
+    var decodedStr = try std.ArrayList(u8).initCapacity(alloc, numOutChars + @intFromBool(morePadding));
 
     var byteIdx: u32 = 0;
-    var destIdx: u32 = 0;
-    while (byteIdx < numBytes and destIdx < outLen) : ({
-        byteIdx += 4;
-        destIdx += 3;
-    }) {
+    while (byteIdx < numBytes) : (byteIdx += 4) {
         const byte0: u24 = B64DecodeMap[chars[byteIdx]];
         const byte1: u24 = B64DecodeMap[chars[byteIdx + 1]];
         const byte2: u24 = B64DecodeMap[chars[byteIdx + 2]];
@@ -153,9 +150,9 @@ pub fn base64Decode(alloc: std.mem.Allocator, chars: []const u8) !std.ArrayList(
 
         const bin = byte0 << 18 | byte1 << 12 | byte2 << 6 | byte3;
 
-        decodedStr.items[destIdx] = @truncate(bin >> 16);
-        decodedStr.items[destIdx + 1] = @truncate(bin >> (8 & 0xFF));
-        decodedStr.items[destIdx + 2] = @truncate(bin & 0xFF);
+        try decodedStr.append(@truncate(bin >> 16));
+        try decodedStr.append(@truncate(bin >> (8 & 0xFF)));
+        try decodedStr.append(@truncate(bin & 0xFF));
     }
 
     if (hasPadding) {
@@ -164,12 +161,12 @@ pub fn base64Decode(alloc: std.mem.Allocator, chars: []const u8) !std.ArrayList(
 
         var bin: u24 = pad0 << 18 | pad1 << 12;
 
-        decodedStr.items[decodedStr.items.len - 2] = @truncate(bin >> 16);
+        try decodedStr.append(@truncate(bin >> 16));
 
-        if (chars.len > numBytes + 2 and chars[numBytes + 2] != '=') {
+        if (morePadding) {
             const pad2: u24 = B64DecodeMap[chars[numBytes + 2]];
             bin |= pad2 << 6;
-            decodedStr.items[decodedStr.items.len - 1] = @truncate(bin >> 8 & 0xFF);
+            try decodedStr.append(@truncate(bin >> 8 & 0xFF));
         }
     }
 
