@@ -1,6 +1,6 @@
 const std = @import("std");
 
-const B64Decode = [_]u6{
+const B64DecodeMap = [_]u6{
     //  binary,     char, idx, val
     0b000000, // NUL, 0
     0b000000, // SOH, 1
@@ -132,23 +132,37 @@ const B64Decode = [_]u6{
     0b000000, // DEL, 127
 };
 
-pub fn decode4Chars(chars: *const [4:0]u8) u24 {
-    const byte0: u24 = B64Decode[chars[0]];
-    const byte1: u24 = B64Decode[chars[1]];
-    const byte2: u24 = B64Decode[chars[2]];
-    const byte3: u24 = B64Decode[chars[3]];
+pub fn base64Decode(chars: []const u8) u24 {
+    const byte0: u24 = B64DecodeMap[chars[0]];
+    const byte1: u24 = B64DecodeMap[chars[1]];
+    const byte2: u24 = B64DecodeMap[chars[2]];
+    const byte3: u24 = B64DecodeMap[chars[3]];
 
     return byte0 << 18 | byte1 << 12 | byte2 << 6 | byte3;
 }
 
 pub fn main() !void {
-    const x = decode4Chars("KGl0");
+    const stdout = std.io.getStdOut().writer();
+    const stderr = std.io.getStdErr().writer();
+    const argv = std.os.argv;
+
+    if (argv.len != 2) {
+        try stderr.print("Expected 2 arguments, found: {d}\n", .{argv.len});
+    }
+
+    const inLen = std.mem.len(argv[1]);
+
+    if (inLen != 5) {
+        try stderr.print("Argument needs to be five characters long, was: {d}\n", .{inLen});
+    }
+
+    const decodedBin = base64Decode("KGl0J");
 
     var str = [_]u8{0} ** 3;
-    str[0] = @truncate(x >> 16);
-    str[1] = @truncate(x >> (8 & 0xFF));
-    str[2] = @truncate(x & 0xFF);
+    str[0] = @truncate(decodedBin >> 16);
+    str[1] = @truncate(decodedBin >> (8 & 0xFF));
+    str[2] = @truncate(decodedBin & 0xFF);
 
-    std.debug.print("Decoded binary: {b}\n", .{x});
-    std.debug.print("Decoded text: {s}\n", .{str});
+    try stdout.print("{s}\n", .{str});
+    // try stdout.print("{b}", .{decodedBin});
 }
